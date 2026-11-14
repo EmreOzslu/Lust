@@ -16,4 +16,11 @@ export const CONFIG = {
   cameraZoom: 1.6,
   joystickDeadzone: 0.12,
   joystickRadius: 56,
+  // Alt kısımda HUD (hotbar + aksiyon) için ayrılan yükseklik; joystick bu bölgeye girmez.
+  hudReserve: 130,
+  inventorySize: 24,
+  hotbarSize: 6,
+  reachTiles: 1.3,
+  actionCooldown: 0.3,
+  messageSeconds: 2,
 } as const;
