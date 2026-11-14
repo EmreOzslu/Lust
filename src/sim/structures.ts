@@ -1,10 +1,13 @@
-import { PIECES, type PieceId } from '../data/buildables';
+import { DECAY_DAMAGE, PIECES, UPKEEP, type PieceId } from '../data/buildables';
 import { TILE } from '../data/tiles';
+import { Inventory } from './inventory';
 import { isBlockedTile, type WorldMap } from './map';
 
 export interface Piece {
   kind: PieceId;
   open: boolean; // yalnızca kapı için anlamlı
+  hp: number;
+  storage?: Inventory; // sandık ve çekirdek
 }
 
 export type PlaceReason = 'bounds' | 'terrain' | 'occupied' | 'no_authority' | 'spawn';
@@ -13,6 +16,8 @@ export type PlaceReason = 'bounds' | 'terrain' | 'occupied' | 'no_authority' | '
 export const AUTHORITY_TILES = 8;
 // Kapalı alan kontrolünde taşma sınırı: bu kadar tile'dan büyük alan "açık" sayılır.
 export const ENCLOSURE_LIMIT = 200;
+// İstasyonların (tezgâh, fırın) kullanılabileceği mesafe (tile).
+export const STATION_TILES = 3;
 
 export class Structures {
   private cells = new Map<number, Piece>();
@@ -24,6 +29,11 @@ export class Structures {
 
   private idx(tx: number, ty: number): number {
     return ty * this.size + tx;
+  }
+
+  private xy(i: number): [number, number] {
+    const x = i % this.size;
+    return [x, (i - x) / this.size];
   }
 
   at(tx: number, ty: number): Piece | undefined {
@@ -42,14 +52,17 @@ export class Structures {
     return PIECES[p.kind].blocks;
   }
 
-  // Yetki çekirdeği, (tx,ty) merkezinde AUTHORITY_TILES menzilinde mi?
   hasAuthority(tx: number, ty: number): boolean {
     for (const [i, p] of this.cells) {
       if (p.kind !== 'core') continue;
-      const cx = i % this.size;
-      const cy = (i - cx) / this.size;
+      const [cx, cy] = this.xy(i);
       if (Math.hypot(cx - tx, cy - ty) <= AUTHORITY_TILES) return true;
     }
+    return false;
+  }
+
+  hasCore(): boolean {
+    for (const p of this.cells.values()) if (p.kind === 'core') return true;
     return false;
   }
 
@@ -67,7 +80,10 @@ export class Structures {
   place(kind: PieceId, tx: number, ty: number): boolean {
     const i = this.idx(tx, ty);
     if (this.cells.has(i)) return false;
-    this.cells.set(i, { kind, open: false });
+    const def = PIECES[kind];
+    const piece: Piece = { kind, open: false, hp: def.hp };
+    if (def.storageSlots) piece.storage = new Inventory(def.storageSlots);
+    this.cells.set(i, piece);
     return true;
   }
 
@@ -85,20 +101,37 @@ export class Structures {
     return true;
   }
 
-  // Kamp ateşi menzili içinde mi?
-  nearCampfire(tx: number, ty: number): boolean {
+  // Yakında (menzil içinde) belirli türde bir yapı var mı? İstasyon kontrolü için.
+  nearKind(kind: PieceId, tx: number, ty: number, range: number): boolean {
     for (const [i, p] of this.cells) {
-      if (p.kind !== 'campfire') continue;
-      const cx = i % this.size;
-      const cy = (i - cx) / this.size;
-      const r = PIECES.campfire.warmTiles ?? 0;
-      if (Math.hypot(cx - tx, cy - ty) <= r) return true;
+      if (p.kind !== kind) continue;
+      const [cx, cy] = this.xy(i);
+      if (Math.hypot(cx - tx, cy - ty) <= range) return true;
     }
     return false;
   }
 
-  // Yapılarla çevrili mi? Yapılar duvar sayılır; arazi açık kabul edilir.
-  // Harita kenarına ya da sınır aşan alana ulaşılırsa açık sayılır.
+  nearCampfire(tx: number, ty: number): boolean {
+    return this.nearKind('campfire', tx, ty, PIECES.campfire.warmTiles ?? 0);
+  }
+
+  // Depolama olan en yakın yapı (sandık ya da çekirdek) menzil içinde mi?
+  storageNear(tx: number, ty: number, range: number): { tx: number; ty: number } | null {
+    let best: { tx: number; ty: number } | null = null;
+    let bestD = Infinity;
+    for (const [i, p] of this.cells) {
+      if (!p.storage) continue;
+      const [cx, cy] = this.xy(i);
+      const d = Math.hypot(cx - tx, cy - ty);
+      if (d <= range && d < bestD) {
+        bestD = d;
+        best = { tx: cx, ty: cy };
+      }
+    }
+    return best;
+  }
+
+  // Yapılar çevresinde kapalı mı? Yapılar duvar sayılır; arazi açık kabul edilir.
   enclosed(tx: number, ty: number): boolean {
     if (this.blocks(tx, ty)) return false;
     const seen = new Set<number>([this.idx(tx, ty)]);
@@ -122,5 +155,44 @@ export class Structures {
   // Gece soğuğuna karşı korunma: ateşe yakın ya da kapalı alanda.
   warm(tx: number, ty: number): boolean {
     return this.nearCampfire(tx, ty) || this.enclosed(tx, ty);
+  }
+
+  // Hasar: can düşer, sıfıra inen yapı kaldırılır. Kaldırılan yapıyı döndürür.
+  damage(tx: number, ty: number, amount: number): Piece | null {
+    const p = this.at(tx, ty);
+    if (!p) return null;
+    p.hp -= amount;
+    if (p.hp > 0) return null;
+    return this.remove(tx, ty);
+  }
+
+  // Oyun günü değişince çalışır. Çekirdek bakımı çekirdek deposundan düşer;
+  // yetmezse her yapı DECAY_DAMAGE kadar can kaybeder. Yıkılanlar döner.
+  tickDay(): { destroyed: [number, Piece][]; upkeepPaid: boolean } {
+    let upkeepPaid = true;
+    const core = this.entries().find(([, p]) => p.kind === 'core');
+    if (core) {
+      const store = core[1].storage!;
+      for (const [id, n] of Object.entries(UPKEEP) as [keyof typeof UPKEEP, number][]) {
+        if (store.count(id) < n) upkeepPaid = false;
+      }
+      if (upkeepPaid) {
+        for (const [id, n] of Object.entries(UPKEEP) as [keyof typeof UPKEEP, number][]) store.remove(id, n);
+      }
+    } else {
+      upkeepPaid = false;
+    }
+
+    const destroyed: [number, Piece][] = [];
+    if (!upkeepPaid) {
+      for (const [i, p] of this.entries()) {
+        p.hp -= DECAY_DAMAGE;
+        if (p.hp <= 0) {
+          this.cells.delete(i);
+          destroyed.push([i, p]);
+        }
+      }
+    }
+    return { destroyed, upkeepPaid };
   }
 }

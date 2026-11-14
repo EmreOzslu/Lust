@@ -77,3 +77,18 @@ describe('Inventory', () => {
     expect(inv.count('axe_stone')).toBe(0);
   });
 });
+
+describe('Inventory.transfer', () => {
+  it('bir eşya türünü iki çanta arasında taşır, sığan kadar', () => {
+    const a = new Inventory(2);
+    const b = new Inventory(1);
+    a.add('wood', 30);
+    expect(Inventory.transfer(a, b, 'wood')).toBe(30);
+    expect(a.count('wood')).toBe(0);
+    expect(b.count('wood')).toBe(30);
+    a.add('stone', 10);
+    // b'de (tek slot) wood 30 var, stone sığmaz
+    expect(Inventory.transfer(a, b, 'stone')).toBe(0);
+    expect(a.count('stone')).toBe(10);
+  });
+});

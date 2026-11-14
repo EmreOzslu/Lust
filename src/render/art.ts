@@ -247,7 +247,8 @@ export function drawAtlas(ctx: Ctx, frames: number): void {
   }
 }
 
-// Oyuncu: üstten görünüm. Omuzlu palto, atkı, geniş kenarlı şapka.
+// Oyuncu: üstten görünüm. Omuzlu palto, ten rengi baş, koyu geniş kenarlı şapka, atkı.
+// Silüet: geniş omuz + şapka kenarı; ortada ateş ya da halka gibi görünmez.
 export function drawPlayer(ctx: Ctx, size: number): void {
   const c = size / 2;
   const k = size / 28; // ölçek: 28 px referans çizimi
@@ -255,49 +256,41 @@ export function drawPlayer(ctx: Ctx, size: number): void {
   ctx.globalAlpha = 0.35;
   ctx.fillStyle = '#000000';
   ctx.beginPath();
-  ctx.ellipse(c + 2, c + 4, 10, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(c + 2, c + 4, 11 * k, 7 * k, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 1;
-  // Omuzlar ve palto
+  // Omuzlar ve palto (yatay elips: üstten bakışta omuz hattı)
   ctx.fillStyle = hex(PAL.coat);
   ctx.beginPath();
   ctx.ellipse(c, c + 2, 12 * k, 7.5 * k, 0, 0, Math.PI * 2);
   ctx.fill();
-  // Koyu kontur: zemin üstünde okunurluk
   ctx.strokeStyle = hex(PAL.trunk);
   ctx.lineWidth = 1.2;
   ctx.stroke();
-  // Palto ışığı: üst-sol kıvrım
+  // Palto kıvrımı: üst-sol ışık
   ctx.globalAlpha = 0.25;
   ctx.fillStyle = hex(PAL.stoneLight);
   ctx.beginPath();
-  ctx.ellipse(c - 3, c - 2, 4, 2.5, -0.4, 0, Math.PI * 2);
+  ctx.ellipse(c - 4, c - 1, 4 * k, 2 * k, -0.3, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 1;
-  // Atkı: önden bir yay
+  // Atkı: omuzlar arasında sarı bant
   ctx.strokeStyle = hex(PAL.scarf);
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(c, c + 1, 5.5, Math.PI * 0.15, Math.PI * 0.85);
+  ctx.ellipse(c, c + 0.5, 6 * k, 3.5 * k, 0, Math.PI * 0.1, Math.PI * 0.9);
   ctx.stroke();
-  // Şapka: geniş kenar (dolgu, ince kontur), taç
+  // Baş: ten rengi, şapka altında
+  circle(ctx, c, c - 0.5, 3.6 * k, 0xc9a27a);
+  // Şapka: geniş kenar (koyu), taç (açık kahve)
   ctx.fillStyle = hex(PAL.hat);
   ctx.beginPath();
-  ctx.ellipse(c, c - 1, 8.5 * k, 6.5 * k, 0, 0, Math.PI * 2);
+  ctx.ellipse(c, c - 1, 8 * k, 5.5 * k, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = hex(PAL.trunk);
   ctx.lineWidth = 1;
   ctx.stroke();
-  circle(ctx, c, c - 1.5, 4 * k, PAL.hatLight, 1);
-  // Sırt çantası askısı: palto üstünde koyu çizgi (ateşten ayırt eder)
-  ctx.strokeStyle = hex(PAL.trunk);
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(c - 6, c + 3);
-  ctx.lineTo(c + 5, c - 4);
-  ctx.stroke();
-  // Lamba yansıması şapkada
-  circle(ctx, c - 1.5, c - 3, 1, PAL.lamp, 0.7);
+  circle(ctx, c, c - 2, 3.4 * k, PAL.hatLight);
 }
 
 // Ölüm çantası: deri sırt çantası, pirinç toka.
@@ -417,6 +410,66 @@ export function drawPiece(ctx: Ctx, kind: string, open: boolean): void {
       ctx.stroke();
       ctx.globalAlpha = 1;
       circle(ctx, S / 2, S / 2, 1.2, PAL.sulfur, 0.9);
+      break;
+    }
+    case 'wall_metal': {
+      ctx.fillStyle = hex(PAL.stoneDark);
+      ctx.fillRect(0, 0, S, S);
+      ctx.fillStyle = hex(0x9aa3ab);
+      ctx.fillRect(1, 1, S - 2, S - 2);
+      ctx.strokeStyle = hex(PAL.stoneDark);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, S / 2);
+      ctx.lineTo(S, S / 2);
+      ctx.moveTo(S / 2, 0);
+      ctx.lineTo(S / 2, S);
+      ctx.stroke();
+      for (const [x, y] of [[4, 4], [S - 4, 4], [4, S - 4], [S - 4, S - 4]] as const) circle(ctx, x, y, 1.1, PAL.stoneDark);
+      // Çelik parıltısı
+      ctx.strokeStyle = hex(PAL.sheen);
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.moveTo(6, 8);
+      ctx.lineTo(12, 5);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      break;
+    }
+    case 'workbench': {
+      // Ahşap tezgâh: tabla, iki ayak, üstünde alet izi
+      ctx.fillStyle = hex(PAL.trunk);
+      ctx.fillRect(2, 4, S - 4, S - 8);
+      ctx.fillStyle = hex(PAL.satchel);
+      ctx.fillRect(3, 5, S - 6, S - 10);
+      ctx.strokeStyle = hex(PAL.satchelDark);
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(4, 9 + i * 5);
+        ctx.lineTo(S - 4, 9 + i * 5);
+        ctx.stroke();
+      }
+      // Alet: çekiç başı
+      ctx.fillStyle = hex(PAL.stoneLight);
+      ctx.fillRect(9, 11, 9, 4);
+      ctx.fillStyle = hex(PAL.rust);
+      ctx.fillRect(16, 12, 2, 6);
+      break;
+    }
+    case 'furnace': {
+      // Taş gövde, ağzında sıcak kor
+      ctx.fillStyle = hex(PAL.stoneDark);
+      ctx.fillRect(2, 2, S - 4, S - 4);
+      ctx.fillStyle = hex(PAL.stone);
+      ctx.fillRect(4, 4, S - 8, S - 8);
+      ctx.fillStyle = hex(PAL.trunk);
+      ctx.fillRect(9, 12, 14, 10);
+      ctx.fillStyle = hex(PAL.rust);
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(10, 17, 12, 4);
+      ctx.globalAlpha = 1;
+      circle(ctx, S / 2, 14, 2, PAL.lamp, 0.6);
       break;
     }
     case 'campfire': {

@@ -8,11 +8,13 @@ import { TILE } from '../data/tiles';
 import { drawAtlas, drawBag, drawLight, drawPiece, drawPlayer } from '../render/art';
 import { FRAME_COUNT, TILE_PX, frameFor, variantAt } from '../render/atlas';
 import { dayNumber, isNight } from '../sim/clock';
+import type { Piece } from '../sim/structures';
 import { Inventory } from '../sim/inventory';
 import { findHarvestTarget, harvestHit } from '../sim/harvest';
 import { generateWorld, isBlockedTile, type WorldMap } from '../sim/map';
 import { moveCircle, type Vec2 } from '../sim/movement';
-import { Structures, type PlaceReason } from '../sim/structures';
+import { STATION_TILES, Structures, type PlaceReason } from '../sim/structures';
+import { STATION_TEXT } from '../data/recipes';
 import {
   dropBag,
   isDead,
@@ -23,7 +25,7 @@ import {
   type Bag,
   type Vitals,
 } from '../sim/survival';
-import { Hud, type HudAction } from './Hud';
+import { Hud, type HudAction, type StorageView } from './Hud';
 import { Joystick } from './Joystick';
 
 type Dir = Phaser.Input.Keyboard.Key;
@@ -71,6 +73,8 @@ export class GameScene extends Phaser.Scene {
   private bags: Bag[] = [];
   private bagGfx = new Map<Bag, Phaser.GameObjects.Image>();
   private lastLit = false;
+  private lastDay = 1;
+  private storageAt: { tx: number; ty: number } | null = null;
 
   private keys!: {
     up: Dir;
@@ -204,8 +208,21 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.updateLights();
+    this.checkDay();
 
+    const ptx = Math.floor(this.pos.x / CONFIG.tileSize);
+    const pty = Math.floor(this.pos.y / CONFIG.tileSize);
+    const storage = this.storageView();
+    if (this.storageAt && !storage) {
+      this.storageAt = null;
+      this.panelOpen = false;
+    }
     this.hud.update({
+      storage,
+      stations: {
+        workbench: this.structures.nearKind('workbench', ptx, pty, STATION_TILES),
+        furnace: this.structures.nearKind('furnace', ptx, pty, STATION_TILES),
+      },
       inv: this.inv,
       selected: this.selected,
       panelOpen: this.panelOpen,
@@ -323,6 +340,12 @@ export class GameScene extends Phaser.Scene {
       case 'craft':
         this.craft(RECIPES[act.index]);
         break;
+      case 'withdraw':
+        this.transferItem(act.id, true);
+        break;
+      case 'deposit':
+        this.transferItem(act.id, false);
+        break;
       case 'toggleBuild':
         this.buildMode = !this.buildMode;
         this.say(this.buildMode ? 'İnşa modu: dünyaya dokun' : 'İnşa modu kapandı');
@@ -342,6 +365,60 @@ export class GameScene extends Phaser.Scene {
 
   private togglePanel(): void {
     this.panelOpen = !this.panelOpen;
+    if (!this.panelOpen) this.storageAt = null;
+  }
+
+  // Açık sandık/çekirdek varsa paneline veri hazırlar.
+  private storageView(): StorageView | null {
+    if (!this.storageAt || !this.panelOpen) return null;
+    const p = this.structures.at(this.storageAt.tx, this.storageAt.ty);
+    if (!p?.storage) return null;
+    const totals = (inv: Inventory) => {
+      const m = new Map<ItemId, number>();
+      for (const st of inv.slots) if (st) m.set(st.id, (m.get(st.id) ?? 0) + st.count);
+      return [...m.entries()].map(([id, count]) => ({ id, count }));
+    };
+    const title = p.kind === 'core' ? 'Yetki çekirdeği' : 'Sandık';
+    return { title, store: totals(p.storage), bag: totals(this.inv) };
+  }
+
+  // Gün değişince bakım: çekirdek yetmezse yapılar çürür.
+  private checkDay(): void {
+    const day = dayNumber(this.clock);
+    if (day === this.lastDay) return;
+    this.lastDay = day;
+    const r = this.structures.tickDay();
+    for (const [i, piece] of r.destroyed) {
+      const tx = i % this.map.size;
+      const ty = (i - tx) / this.map.size;
+      this.removePieceImage(tx, ty);
+      this.spill(tx, ty, piece);
+    }
+    if (this.storageAt && !this.structures.at(this.storageAt.tx, this.storageAt.ty)) this.storageAt = null;
+    if (!r.upkeepPaid) {
+      this.say(
+        r.destroyed.length
+          ? `Bakım yok! ${r.destroyed.length} yapı yıkıldı`
+          : 'Bakım yok! Yapılar çürüyor',
+      );
+    } else {
+      this.say('Çekirdek bakımı yapıldı');
+    }
+  }
+
+  // Yıkılan yapının deposu yere dökülür (bir çanta olarak).
+  private spill(tx: number, ty: number, piece: Piece): void {
+    if (!piece.storage) return;
+    const stacks = piece.storage.takeAll();
+    if (stacks.length === 0) return;
+    this.addBag({ x: (tx + 0.5) * CONFIG.tileSize, y: (ty + 0.5) * CONFIG.tileSize, stacks });
+  }
+
+  private addBag(bag: Bag): void {
+    this.bags.push(bag);
+    const img = this.add.image(bag.x, bag.y, 'bag').setDepth(8);
+    this.uiCam.ignore(img);
+    this.bagGfx.set(bag, img);
   }
 
   private heldItem(): ItemId | null {
@@ -360,6 +437,17 @@ export class GameScene extends Phaser.Scene {
         this.structures.toggleDoor(door.tx, door.ty);
         this.refreshPiece(door.tx, door.ty);
         this.say(this.structures.at(door.tx, door.ty)?.open ? 'Kapı açıldı' : 'Kapı kapandı');
+        return;
+      }
+      const box = this.structures.storageNear(
+        Math.floor(this.pos.x / T),
+        Math.floor(this.pos.y / T),
+        CONFIG.reachTiles + 0.5,
+      );
+      if (box) {
+        this.storageAt = box;
+        this.panelOpen = true;
+        this.say('Sandık açık');
         return;
       }
       this.say('Yakında kaynak yok');
@@ -411,9 +499,33 @@ export class GameScene extends Phaser.Scene {
 
   private craft(recipe: Recipe | undefined): void {
     if (!recipe) return;
+    if (recipe.station) {
+      const T = CONFIG.tileSize;
+      const near = this.structures.nearKind(
+        recipe.station,
+        Math.floor(this.pos.x / T),
+        Math.floor(this.pos.y / T),
+        STATION_TILES,
+      );
+      if (!near) {
+        this.say(`${STATION_TEXT[recipe.station]} yakında değil`);
+        return;
+      }
+    }
     if (this.inv.craft(recipe)) this.say(`Üretildi: ${ITEMS[recipe.result].name}`);
     else if (!this.inv.canCraft(recipe)) this.say('Malzeme yetersiz');
     else this.say('Çanta dolu');
+  }
+
+  private transferItem(id: ItemId, fromStore: boolean): void {
+    if (!this.storageAt) return;
+    const p = this.structures.at(this.storageAt.tx, this.storageAt.ty);
+    if (!p?.storage) return;
+    const moved = fromStore
+      ? Inventory.transfer(p.storage, this.inv, id)
+      : Inventory.transfer(this.inv, p.storage, id);
+    if (moved === 0) this.say('Yer yok');
+    else this.say(`${moved} ${ITEMS[id].name} ${fromStore ? 'alındı' : 'konuldu'}`);
   }
 
   // İnşa modunda dünyaya dokunuş: boş kareye yerleştir, dolu kareyi (kendi yapını) yık.
@@ -435,6 +547,8 @@ export class GameScene extends Phaser.Scene {
       const def = PIECES[existing.kind];
       this.structures.remove(tx, ty);
       this.removePieceImage(tx, ty);
+      this.spill(tx, ty, existing);
+      if (this.storageAt && this.storageAt.tx === tx && this.storageAt.ty === ty) this.storageAt = null;
       for (const [id, n] of Object.entries(def.cost) as [ItemId, number][]) {
         if (!this.inv.add(id, n)) this.floatText(tx * T + T / 2, ty * T + T / 2, 'Çanta dolu');
       }
@@ -444,7 +558,7 @@ export class GameScene extends Phaser.Scene {
 
     const kind: PieceId = BUILD_ORDER[this.pieceIndex];
     const def = PIECES[kind];
-    if (kind === 'core' && this.hasCore()) {
+    if (kind === 'core' && this.structures.hasCore()) {
       this.say('Zaten bir yetki çekirdeği var');
       return;
     }
@@ -466,11 +580,6 @@ export class GameScene extends Phaser.Scene {
     this.structures.place(kind, tx, ty);
     this.addPieceImage(kind, tx, ty);
     this.say(`Yerleştirildi: ${def.name}`);
-  }
-
-  private hasCore(): boolean {
-    for (const [, p] of this.structures.entries()) if (p.kind === 'core') return true;
-    return false;
   }
 
   private addPieceImage(kind: PieceId, tx: number, ty: number): void {
@@ -509,12 +618,7 @@ export class GameScene extends Phaser.Scene {
     this.buildMode = false;
     this.joystick.cancel();
     const bag = dropBag(this.inv, this.pos.x, this.pos.y);
-    if (bag) {
-      this.bags.push(bag);
-      const img = this.add.image(bag.x, bag.y, 'bag').setDepth(8);
-      this.uiCam.ignore(img);
-      this.bagGfx.set(bag, img);
-    }
+    if (bag) this.addBag(bag);
   }
 
   private respawn(): void {

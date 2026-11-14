@@ -48,10 +48,10 @@ export const PAL = {
   sulfur: 0x5fd8c8,
 
   // Karakter
-  coat: 0x3b4f4f,
+  coat: 0x2f4f5a,
   scarf: 0xd9a441,
-  hat: 0x6b4f2e,
-  hatLight: 0x7d5c36,
+  hat: 0x1f1f22,
+  hatLight: 0x3a3d42,
   satchel: 0x6b4a2a,
   satchelDark: 0x4f3520,
 } as const;

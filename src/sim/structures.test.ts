@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { Structures, AUTHORITY_TILES, ENCLOSURE_LIMIT } from './structures';
 import { generateWorld } from './map';
-import { PIECES } from '../data/buildables';
+import { PIECES, UPKEEP, DECAY_DAMAGE } from '../data/buildables';
+import { Inventory } from './inventory';
 
-// Düz çimen harita (kenarları hariç), spawn merkezde.
 function flatMap() {
   const map = generateWorld(1);
   map.tiles.fill(0);
@@ -21,19 +21,14 @@ describe('yetki ve yerleştirme', () => {
     expect(s.canPlace(map, 'wall_wood', 20 + AUTHORITY_TILES + 1, 20)).toBe('no_authority');
   });
 
-  it('dolu kare, sınır ve arazi reddedilir', () => {
+  it('dolu kare, sınır, arazi ve doğma noktası reddedilir', () => {
     const map = flatMap();
     const s = new Structures(map.size);
     s.place('core', 20, 20);
     expect(s.canPlace(map, 'floor', 20, 20)).toBe('occupied');
     expect(s.canPlace(map, 'floor', -1, 0)).toBe('bounds');
-    map.tiles[21 * map.size + 21] = 2; // taşlık
+    map.tiles[21 * map.size + 21] = 2;
     expect(s.canPlace(map, 'floor', 21, 21)).toBe('terrain');
-  });
-
-  it('başlangıç karesine inşa edilmez (doğma noktası güvenliği)', () => {
-    const map = flatMap();
-    const s = new Structures(map.size);
     s.place('core', map.spawn.tx + 2, map.spawn.ty);
     expect(s.canPlace(map, 'floor', map.spawn.tx, map.spawn.ty)).toBe('spawn');
   });
@@ -47,10 +42,91 @@ describe('yetki ve yerleştirme', () => {
     s.toggleDoor(22, 22);
     expect(s.blocks(22, 22)).toBe(false);
   });
+
+  it('yapılar doğru canla başlar, sandık ve çekirdek depolama alır', () => {
+    const map = flatMap();
+    const s = new Structures(map.size);
+    s.place('core', 20, 20);
+    s.place('chest', 22, 20);
+    s.place('wall_wood', 23, 20);
+    expect(s.at(20, 20)!.hp).toBe(PIECES.core.hp);
+    expect(s.at(20, 20)!.storage).toBeInstanceOf(Inventory);
+    expect(s.at(22, 20)!.storage).toBeInstanceOf(Inventory);
+    expect(s.at(23, 20)!.storage).toBeUndefined();
+  });
+});
+
+describe('istasyon ve depolama', () => {
+  it('tezgâh/fırın menzilde aranır', () => {
+    const map = flatMap();
+    const s = new Structures(map.size);
+    s.place('workbench', 10, 10);
+    expect(s.nearKind('workbench', 11, 10, 3)).toBe(true);
+    expect(s.nearKind('workbench', 20, 10, 3)).toBe(false);
+    expect(s.nearKind('furnace', 10, 10, 3)).toBe(false);
+  });
+
+  it('en yakın depolama yapısı bulunur', () => {
+    const map = flatMap();
+    const s = new Structures(map.size);
+    s.place('core', 20, 20);
+    s.place('chest', 25, 20);
+    expect(s.storageNear(21, 20, 6)).toEqual({ tx: 20, ty: 20 });
+    expect(s.storageNear(40, 40, 3)).toBeNull();
+  });
+});
+
+describe('hasar ve bakım', () => {
+  it('hasar canı düşürür, sıfırda yapı kaldırılır', () => {
+    const map = flatMap();
+    const s = new Structures(map.size);
+    s.place('core', 20, 20);
+    s.place('wall_wood', 22, 20);
+    expect(s.damage(22, 20, 100)).toBeNull();
+    expect(s.at(22, 20)!.hp).toBe(PIECES.wall_wood.hp - 100);
+    const gone = s.damage(22, 20, 1000);
+    expect(gone?.kind).toBe('wall_wood');
+    expect(s.at(22, 20)).toBeUndefined();
+  });
+
+  it('çekirdek bakımı yeterliyse bakım düşer, yapılar sağlam kalır', () => {
+    const map = flatMap();
+    const s = new Structures(map.size);
+    s.place('core', 20, 20);
+    s.place('wall_wood', 22, 20);
+    const core = s.at(20, 20)!;
+    core.storage!.add('wood', 10);
+    const r = s.tickDay();
+    expect(r.upkeepPaid).toBe(true);
+    expect(core.storage!.count('wood')).toBe(10 - (UPKEEP.wood ?? 0));
+    expect(r.destroyed).toHaveLength(0);
+  });
+
+  it('bakım yoksa yapılar çürür ve zamanla yıkılır', () => {
+    const map = flatMap();
+    const s = new Structures(map.size);
+    s.place('core', 20, 20);
+    s.place('campfire', 22, 20); // 100 can
+    let destroyed: string[] = [];
+    for (let day = 0; day < 3; day++) {
+      const r = s.tickDay();
+      expect(r.upkeepPaid).toBe(false);
+      destroyed = destroyed.concat(r.destroyed.map(([, p]) => p.kind));
+    }
+    // 100 can, 80 hasar/gün → ikinci günde yıkılır
+    expect(DECAY_DAMAGE).toBeGreaterThan(PIECES.campfire.hp / 2);
+    expect(destroyed).toContain('campfire');
+  });
+
+  it('çekirdek yoksa bakım ödenmez', () => {
+    const map = flatMap();
+    const s = new Structures(map.size);
+    s.place('wall_wood', 22, 20);
+    expect(s.tickDay().upkeepPaid).toBe(false);
+  });
 });
 
 describe('kapalı alan ve sıcaklık', () => {
-  // 3x3 oda: duvarlar (19..21 halka), iç (20,20) boş.
   function room(s: Structures) {
     for (let x = 19; x <= 21; x++) {
       s.place('wall_wood', x, 19);
@@ -91,7 +167,6 @@ describe('kapalı alan ve sıcaklık', () => {
   it('sınırı aşan büyük kapalı alan "açık" sayılır (taşma)', () => {
     const map = flatMap();
     const s = new Structures(map.size);
-    // 30x30 dış çember: iç alan 29*29 = 841 > ENCLOSURE_LIMIT
     for (let i = 10; i <= 40; i++) {
       s.place('wall_stone', i, 10);
       s.place('wall_stone', i, 40);

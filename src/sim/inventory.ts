@@ -70,6 +70,15 @@ export class Inventory {
     return true;
   }
 
+  // Bir eşya türünün tamamını başka bir çantaya taşır; taşınan miktarı döndürür.
+  static transfer(from: Inventory, to: Inventory, id: ItemId): number {
+    const count = Math.min(from.count(id), to.freeSpace(id));
+    if (count <= 0) return 0;
+    to.add(id, count);
+    from.remove(id, count);
+    return count;
+  }
+
   // Tüm dolu slotları alır ve çantayı boşaltır (ölünce çantanın bırakılması için).
   takeAll(): Stack[] {
     const out: Stack[] = [];
