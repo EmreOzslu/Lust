@@ -21,9 +21,9 @@ describe('harvestHit', () => {
     const map = makeMap();
     const rem = new Map<number, number>();
     const hand = harvestHit(map, rem, idxOf(2, 2), null, always);
-    expect(hand).toEqual({ ok: true, item: 'wood', count: 1, depleted: false });
+    expect(hand).toMatchObject({ ok: true, item: 'wood', count: 1, depleted: false });
     const axe = harvestHit(map, rem, idxOf(2, 2), 'axe_stone', always);
-    expect(axe).toEqual({ ok: true, item: 'wood', count: 2, depleted: false });
+    expect(axe).toMatchObject({ ok: true, item: 'wood', count: 2, depleted: false });
   });
 
   it('taş (kazma gereken tür) elle kırılabilir: kazma yoksa need_tool yok', () => {
@@ -37,7 +37,7 @@ describe('harvestHit', () => {
     const rem = new Map<number, number>();
     let last = harvestHit(map, rem, idxOf(2, 2), 'axe_stone', always);
     for (let i = 0; i < 4; i++) last = harvestHit(map, rem, idxOf(2, 2), 'axe_stone', always);
-    expect(last).toEqual({ ok: true, item: 'wood', count: 2, depleted: true });
+    expect(last).toMatchObject({ ok: true, item: 'wood', count: 2, depleted: true });
     expect(map.tiles[idxOf(2, 2)]).toBe(TILE.Grass);
     expect(rem.size).toBe(0);
   });
@@ -46,21 +46,21 @@ describe('harvestHit', () => {
     const map = makeMap();
     const rem = new Map<number, number>();
     const r = harvestHit(map, rem, idxOf(0, 0), null, always);
-    expect(r).toEqual({ ok: true, item: 'stone', count: 1, depleted: false });
+    expect(r).toMatchObject({ ok: true, item: 'stone', count: 1, depleted: false });
   });
 
   it('taş kazmayla 2 birim/vuruş toplar', () => {
     const map = makeMap();
     const rem = new Map<number, number>();
     const r = harvestHit(map, rem, idxOf(0, 0), 'pick_stone', always);
-    expect(r).toEqual({ ok: true, item: 'stone', count: 2, depleted: false });
+    expect(r).toMatchObject({ ok: true, item: 'stone', count: 2, depleted: false });
   });
 
   it('yanlış araç ağaca hasar vermez: elle fallback (1/vuruş)', () => {
     const map = makeMap();
     const rem = new Map<number, number>();
     const r = harvestHit(map, rem, idxOf(2, 2), 'pick_stone', always);
-    expect(r).toEqual({ ok: true, item: 'wood', count: 1, depleted: false });
+    expect(r).toMatchObject({ ok: true, item: 'wood', count: 1, depleted: false });
   });
 
   it('çanta doluysa vuruş boşa gitmez', () => {
@@ -100,5 +100,26 @@ describe('findHarvestTarget', () => {
   it('erişim yeterliyse en yakın taşı hedef alır', () => {
     const map = makeMap();
     expect(findHarvestTarget(map, 1.5 * 32, 1.5 * 32, 60, 32)).toBe(idxOf(0, 0));
+  });
+
+  it('su: sonsuz, çanta yerine susuzluk verir', () => {
+    const map = makeMap();
+    map.tiles[idxOf(4, 0)] = TILE.Water;
+    const rem = new Map<number, number>();
+    const r = harvestHit(map, rem, idxOf(4, 0), null, () => false);
+    expect(r).toMatchObject({ ok: true, item: null, stat: 'thirst', restore: 8, depleted: false });
+    for (let i = 0; i < 50; i++) harvestHit(map, rem, idxOf(4, 0), null, () => false);
+    expect(map.tiles[idxOf(4, 0)]).toBe(TILE.Water);
+  });
+
+  it('çalı: 4 vuruşta tükenir, her vuruş 10 açlık verir', () => {
+    const map = makeMap();
+    map.tiles[idxOf(1, 4)] = TILE.Bush;
+    const rem = new Map<number, number>();
+    let last = harvestHit(map, rem, idxOf(1, 4), null, always);
+    expect(last).toMatchObject({ ok: true, stat: 'hunger', restore: 10, depleted: false });
+    for (let i = 0; i < 3; i++) last = harvestHit(map, rem, idxOf(1, 4), null, always);
+    expect(last).toMatchObject({ ok: true, depleted: true });
+    expect(map.tiles[idxOf(1, 4)]).toBe(TILE.Grass);
   });
 });

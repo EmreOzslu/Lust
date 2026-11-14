@@ -1,4 +1,4 @@
-import { CONFIG } from '../data/config';
+import { CONFIG, SURVIVAL } from '../data/config';
 import { TILE, TILE_DEFS } from '../data/tiles';
 import { mulberry32 } from './rng';
 
@@ -56,6 +56,7 @@ export function generateWorld(seed: number): WorldMap {
       else if (e > CONFIG.rockElevation) t = TILE.Rock;
       else if (m > CONFIG.forestMoisture) t = TILE.Forest;
       else if (rand() < CONFIG.scrapChance) t = TILE.Scrap;
+      else if (rand() < SURVIVAL.bushChance) t = TILE.Bush;
       else t = TILE.Grass;
       tiles[ty * size + tx] = t;
     }

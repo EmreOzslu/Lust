@@ -69,6 +69,13 @@ export class Joystick {
     this.knob.setPosition(this.knobX, this.knobY);
   }
 
+  // Oyuncu öldüğünde vb.: aktif dokunuşu iptal eder.
+  cancel(): void {
+    this.pointerId = -1;
+    this.base.setVisible(false);
+    this.knob.setVisible(false);
+  }
+
   end(id: number): void {
     if (!this.active || id !== this.pointerId) return;
     this.pointerId = -1;

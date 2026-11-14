@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
-import { CONFIG } from '../data/config';
+import { CONFIG, SURVIVAL } from '../data/config';
 import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES, type Recipe } from '../data/recipes';
 import type { Inventory } from '../sim/inventory';
+import type { Vitals } from '../sim/survival';
 
 export type HudAction =
   | { kind: 'select'; index: number }
@@ -15,6 +16,10 @@ export interface HudState {
   selected: number;
   panelOpen: boolean;
   message: string;
+  vitals: Vitals;
+  dayText: string;
+  dead: boolean;
+  respawnIn: number;
 }
 
 const SLOT = 50;
@@ -24,10 +29,13 @@ const SMALL_STYLE = { fontFamily: 'sans-serif', fontSize: '10px', color: '#e8d9a
 const ROW_H = 44;
 const ROW_GAP = 6;
 const ROW_POOL = 8;
+const BAR_X = 62;
+const BAR_W = 120;
+const BAR_H = 8;
+const BAR_Y = [48, 62, 76];
 
-// Sabit düzen. Tüm koordinatlar ekran (oyun) pikseli cinsinden, UI kamerasında çizilir.
+// Sabit düzen. Koordinatlar ekran (oyun) pikseli; UI kamerasında çizilir.
 export class Hud {
-  private scene: Phaser.Scene;
   private W: number;
   private H: number;
   private shapes: Phaser.GameObjects.Graphics;
@@ -35,13 +43,15 @@ export class Hud {
   private actionLabel: Phaser.GameObjects.Text;
   private craftLabel: Phaser.GameObjects.Text;
   private message: Phaser.GameObjects.Text;
+  private barLabels: Phaser.GameObjects.Text[] = [];
+  private dayLabel: Phaser.GameObjects.Text;
+  private deadLabel: Phaser.GameObjects.Text;
   private panelTitle: Phaser.GameObjects.Text;
   private panelRows: Phaser.GameObjects.Text[] = [];
   private panelInv: Phaser.GameObjects.Text;
   private objects: Phaser.GameObjects.GameObject[] = [];
 
   constructor(scene: Phaser.Scene) {
-    this.scene = scene;
     this.W = scene.scale.width;
     this.H = scene.scale.height;
 
@@ -60,20 +70,40 @@ export class Hud {
     this.actionLabel = scene.add.text(a.x, a.y, 'VUR', TEXT_STYLE).setOrigin(0.5).setDepth(901);
     const c = this.craftBox();
     this.craftLabel = scene.add.text(c.x + c.w / 2, c.y + c.h / 2, 'ÜRET', TEXT_STYLE).setOrigin(0.5).setDepth(901);
-    this.message = scene.add.text(16, 20, '', TEXT_STYLE).setDepth(901).setWordWrapWidth(this.W - 130);
-    this.panelTitle = scene.add.text(this.panelBox().x + 12, this.panelBox().y + 12, 'Üretim', TEXT_STYLE).setDepth(901);
+    this.message = scene.add.text(16, 18, '', TEXT_STYLE).setDepth(901).setWordWrapWidth(this.W - 130);
+
+    for (const [label, y] of [
+      ['Can', BAR_Y[0]],
+      ['Açlık', BAR_Y[1]],
+      ['Susuzluk', BAR_Y[2]],
+    ] as const) {
+      this.barLabels.push(scene.add.text(16, y - 2, label, SMALL_STYLE).setDepth(901));
+    }
+    this.dayLabel = scene.add.text(16, 92, '', SMALL_STYLE).setDepth(901);
+
+    const p = this.panelBox();
+    this.panelTitle = scene.add.text(p.x + 12, p.y + 12, 'Üretim', TEXT_STYLE).setDepth(901);
     for (let i = 0; i < ROW_POOL; i++) {
       this.panelRows.push(scene.add.text(0, 0, '', TEXT_STYLE).setDepth(901).setVisible(false));
     }
     this.panelInv = scene.add
-      .text(this.panelBox().x + 12, this.panelBox().y + this.panelBox().h - 90, '', SMALL_STYLE)
+      .text(p.x + 12, p.y + p.h - 90, '', SMALL_STYLE)
       .setDepth(901)
-      .setWordWrapWidth(this.panelBox().w - 24);
+      .setWordWrapWidth(p.w - 24);
+
+    this.deadLabel = scene.add
+      .text(this.W / 2, this.H / 2, '', { fontFamily: 'sans-serif', fontSize: '22px', color: '#e8d9a0', align: 'center' })
+      .setOrigin(0.5)
+      .setDepth(950)
+      .setVisible(false);
 
     this.objects.push(
       this.actionLabel,
       this.craftLabel,
       this.message,
+      ...this.barLabels,
+      this.dayLabel,
+      this.deadLabel,
       this.panelTitle,
       this.panelInv,
       ...this.panelRows,
@@ -87,8 +117,7 @@ export class Hud {
   hitTest(x: number, y: number, panelOpen: boolean): HudAction | null {
     if (panelOpen) {
       for (let i = 0; i < RECIPES.length; i++) {
-        const r = this.rowBox(i);
-        if (inside(x, y, r)) return { kind: 'craft', index: i };
+        if (inside(x, y, this.rowBox(i))) return { kind: 'craft', index: i };
       }
     }
     if (inside(x, y, this.craftBox())) return { kind: 'toggleCraft' };
@@ -127,6 +156,21 @@ export class Hud {
       }
     }
 
+    // Hayati değer çubukları: can, açlık, susuzluk
+    const bars: [number, number, number][] = [
+      [state.vitals.hp, 0xc0504d, 0],
+      [state.vitals.hunger, 0xd9a441, 1],
+      [state.vitals.thirst, 0x4fa3c7, 2],
+    ];
+    for (const [val, color, row] of bars) {
+      const y = BAR_Y[row];
+      g.fillStyle(0x0b1a1f, 0.6);
+      g.fillRoundedRect(BAR_X, y, BAR_W, BAR_H, 3);
+      g.fillStyle(color, 1);
+      g.fillRoundedRect(BAR_X, y, BAR_W * Math.max(0, val) / SURVIVAL.maxVital, BAR_H, 3);
+    }
+    this.dayLabel.setText(state.dayText);
+
     // Aksiyon butonu
     const a = this.actionCircle();
     g.fillStyle(0x0b1a1f, 0.5);
@@ -145,6 +189,7 @@ export class Hud {
     // Üretim paneli
     this.panelTitle.setVisible(state.panelOpen);
     this.panelInv.setVisible(state.panelOpen);
+    for (const t of this.panelRows) t.setVisible(false);
     if (state.panelOpen) {
       const p = this.panelBox();
       g.fillStyle(0x0b1a1f, 0.85);
@@ -152,13 +197,9 @@ export class Hud {
       g.lineStyle(2, 0xe8d9a0, 0.5);
       g.strokeRoundedRect(p.x, p.y, p.w, p.h, 10);
 
-      for (let i = 0; i < ROW_POOL; i++) {
+      RECIPES.forEach((recipe, i) => {
+        if (i >= ROW_POOL) return;
         const txt = this.panelRows[i];
-        const recipe = RECIPES[i];
-        if (!recipe) {
-          txt.setVisible(false);
-          continue;
-        }
         const r = this.rowBox(i);
         const can = state.inv.canCraft(recipe);
         g.fillStyle(can ? 0xe8d9a0 : 0x6b6a68, 0.2);
@@ -166,9 +207,17 @@ export class Hud {
         txt.setPosition(r.x + 10, r.y + r.h / 2).setOrigin(0, 0.5).setVisible(true);
         txt.setColor(can ? '#e8d9a0' : '#8f8c86');
         txt.setText(`${ITEMS[recipe.result].name} ×${recipe.count}  —  ${costText(recipe)}`);
-      }
+      });
 
       this.panelInv.setText('Çanta:\n' + inventorySummary(state.inv));
+    }
+
+    // Ölüm ekranı
+    this.deadLabel.setVisible(state.dead);
+    if (state.dead) {
+      g.fillStyle(0x000000, 0.6);
+      g.fillRect(0, 0, this.W, this.H);
+      this.deadLabel.setText(`Öldün\nUyanıyorsun... ${Math.ceil(state.respawnIn)}`);
     }
   }
 
@@ -187,7 +236,7 @@ export class Hud {
   }
 
   private panelBox(): { x: number; y: number; w: number; h: number } {
-    return { x: 16, y: 60, w: this.W - 32, h: this.H - 60 - 120 };
+    return { x: 16, y: 116, w: this.W - 32, h: this.H - 116 - 120 };
   }
 
   private rowBox(i: number): { x: number; y: number; w: number; h: number } {

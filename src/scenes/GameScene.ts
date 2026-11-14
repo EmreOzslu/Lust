@@ -1,12 +1,23 @@
 import Phaser from 'phaser';
-import { CONFIG } from '../data/config';
+import { CONFIG, SURVIVAL } from '../data/config';
 import { ITEMS, TOOL_ITEM, type ItemId } from '../data/items';
 import { RECIPES, type Recipe } from '../data/recipes';
 import { TILE_DEFS } from '../data/tiles';
 import { Inventory } from '../sim/inventory';
+import { dayNumber, isNight } from '../sim/clock';
 import { findHarvestTarget, harvestHit } from '../sim/harvest';
 import { generateWorld, isBlockedTile, type WorldMap } from '../sim/map';
 import { moveCircle, type Vec2 } from '../sim/movement';
+import {
+  dropBag,
+  isDead,
+  pickupBags,
+  restore,
+  startVitals,
+  tickVitals,
+  type Bag,
+  type Vitals,
+} from '../sim/survival';
 import { Hud, type HudAction } from './Hud';
 import { Joystick } from './Joystick';
 
@@ -15,12 +26,13 @@ type Dir = Phaser.Input.Keyboard.Key;
 export class GameScene extends Phaser.Scene {
   private map!: WorldMap;
   private pos: Vec2 = { x: 0, y: 0 };
+  private spawn: Vec2 = { x: 0, y: 0 };
   private player!: Phaser.GameObjects.Graphics;
   private joystick!: Joystick;
   private hud!: Hud;
-  private worldCam!: Phaser.Cameras.Scene2D.Camera;
   private uiCam!: Phaser.Cameras.Scene2D.Camera;
   private groundTex!: Phaser.Textures.CanvasTexture;
+  private nightOverlay!: Phaser.GameObjects.Rectangle;
   private inv = new Inventory(CONFIG.inventorySize);
   private remaining = new Map<number, number>();
   private selected = 0;
@@ -28,7 +40,13 @@ export class GameScene extends Phaser.Scene {
   private cooldown = 0;
   private message = '';
   private messageLeft = 0;
-  private dirty = true;
+
+  private vitals: Vitals = startVitals();
+  private clock = 0;
+  private dead = false;
+  private respawnLeft = 0;
+  private bags: Bag[] = [];
+  private bagGfx = new Map<Bag, Phaser.GameObjects.Graphics>();
 
   private keys!: {
     up: Dir;
@@ -50,10 +68,11 @@ export class GameScene extends Phaser.Scene {
 
     const ground = this.drawGround();
 
-    this.pos = {
+    this.spawn = {
       x: (this.map.spawn.tx + 0.5) * T,
       y: (this.map.spawn.ty + 0.5) * T,
     };
+    this.pos = { ...this.spawn };
     this.player = this.add.graphics().setDepth(10);
     this.player.fillStyle(0x0b1a1f, 0.4);
     this.player.fillEllipse(0, CONFIG.playerRadius, CONFIG.playerRadius * 2, CONFIG.playerRadius);
@@ -61,18 +80,24 @@ export class GameScene extends Phaser.Scene {
     this.player.fillCircle(0, 0, CONFIG.playerRadius);
     this.player.setPosition(this.pos.x, this.pos.y);
 
-    this.worldCam = this.cameras.main;
-    this.worldCam.setBounds(0, 0, this.map.size * T, this.map.size * T);
-    this.worldCam.setZoom(CONFIG.cameraZoom);
-    this.worldCam.startFollow(this.player, true, 0.15, 0.15);
+    const worldCam = this.cameras.main;
+    worldCam.setBounds(0, 0, this.map.size * T, this.map.size * T);
+    worldCam.setZoom(CONFIG.cameraZoom);
+    worldCam.startFollow(this.player, true, 0.15, 0.15);
 
     this.joystick = new Joystick(this);
     this.hud = new Hud(this);
 
-    // UI kamerası: zoom'dan etkilenmeyen joystick ve HUD katmanı.
+    // Gece karartması: UI katmanında, zoom'dan bağımsız tam ekran.
+    this.nightOverlay = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x0a1530, 0)
+      .setOrigin(0, 0)
+      .setDepth(800);
+
+    // UI kamerası: joystick, HUD ve karartma. Dünya kamerası bunları görmez.
     this.uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height);
     this.uiCam.ignore([ground, this.player]);
-    this.worldCam.ignore([...this.joystick.getObjects(), ...this.hud.getObjects()]);
+    worldCam.ignore([...this.joystick.getObjects(), ...this.hud.getObjects(), this.nightOverlay]);
 
     const kb = this.input.keyboard;
     if (kb) {
@@ -99,18 +124,40 @@ export class GameScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     const dt = delta / 1000;
-
     this.cooldown = Math.max(0, this.cooldown - dt);
     if (this.message) {
       this.messageLeft -= dt;
-      if (this.messageLeft <= 0) {
-        this.message = '';
-        this.dirty = true;
-      }
+      if (this.messageLeft <= 0) this.message = '';
     }
 
-    if (this.keys) this.readKeys();
+    if (this.dead) {
+      this.respawnLeft -= dt;
+      if (this.respawnLeft <= 0) this.respawn();
+    } else {
+      this.clock += dt;
+      const night = isNight(this.clock);
+      this.vitals = tickVitals(this.vitals, dt, night, false);
+      if (isDead(this.vitals)) this.die();
+      else this.tickPlayer(dt);
+      this.pickUpBags();
+    }
 
+    this.nightOverlay.setAlpha(!this.dead && isNight(this.clock) ? SURVIVAL.nightAlpha : 0);
+
+    this.hud.update({
+      inv: this.inv,
+      selected: this.selected,
+      panelOpen: this.panelOpen,
+      message: this.message,
+      vitals: this.vitals,
+      dayText: `Gün ${dayNumber(this.clock)} · ${isNight(this.clock) ? 'Gece' : 'Gündüz'}`,
+      dead: this.dead,
+      respawnIn: this.respawnLeft,
+    });
+  }
+
+  private tickPlayer(dt: number): void {
+    if (this.keys) this.readKeys();
     const dir = this.readDirection();
     const step = CONFIG.playerSpeed * dt;
     this.pos = moveCircle(
@@ -122,16 +169,6 @@ export class GameScene extends Phaser.Scene {
       (tx, ty) => isBlockedTile(this.map, tx, ty),
     );
     this.player.setPosition(this.pos.x, this.pos.y);
-
-    if (this.dirty) {
-      this.hud.update({
-        inv: this.inv,
-        selected: this.selected,
-        panelOpen: this.panelOpen,
-        message: this.message,
-      });
-      this.dirty = false;
-    }
   }
 
   private readKeys(): void {
@@ -154,6 +191,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onPointerDown(p: Phaser.Input.Pointer): void {
+    if (this.dead) return;
     const act = this.hud.hitTest(p.x, p.y, this.panelOpen);
     if (act) {
       this.handleHud(act);
@@ -174,7 +212,7 @@ export class GameScene extends Phaser.Scene {
   private handleHud(act: HudAction): void {
     switch (act.kind) {
       case 'select':
-        this.select(act.index);
+        this.selected = act.index;
         break;
       case 'action':
         this.doAction();
@@ -190,12 +228,10 @@ export class GameScene extends Phaser.Scene {
 
   private select(i: number): void {
     this.selected = i;
-    this.dirty = true;
   }
 
   private togglePanel(): void {
     this.panelOpen = !this.panelOpen;
-    this.dirty = true;
   }
 
   private heldItem(): ItemId | null {
@@ -203,15 +239,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private doAction(): void {
-    if (this.cooldown > 0) return;
+    if (this.cooldown > 0 || this.dead) return;
     const T = CONFIG.tileSize;
-    const idx = findHarvestTarget(
-      this.map,
-      this.pos.x,
-      this.pos.y,
-      CONFIG.reachTiles * T,
-      T,
-    );
+    const idx = findHarvestTarget(this.map, this.pos.x, this.pos.y, CONFIG.reachTiles * T, T);
     if (idx === null) {
       this.say('Yakında kaynak yok');
       return;
@@ -227,35 +257,70 @@ export class GameScene extends Phaser.Scene {
     const wy = (ty + 0.5) * T;
 
     if (!res.ok) {
-      if (res.reason === 'need_tool') {
-        this.say(`Önce ${ITEMS[TOOL_ITEM[res.need]].name} gerekli`);
-      } else if (res.reason === 'no_space') {
-        this.say('Çanta dolu');
-      }
+      if (res.reason === 'need_tool') this.say(`Önce ${ITEMS[TOOL_ITEM[res.need]].name} gerekli`);
+      else if (res.reason === 'no_space') this.say('Çanta dolu');
       return;
     }
 
-    this.inv.add(res.item, res.count);
-    this.floatText(wx, wy, `+${res.count} ${ITEMS[res.item].name}`);
+    if (res.item) {
+      this.inv.add(res.item, res.count);
+      this.floatText(wx, wy, `+${res.count} ${ITEMS[res.item].name}`);
+    }
+    if (res.stat) {
+      this.vitals = restore(this.vitals, res.stat, res.restore);
+      this.floatText(wx, wy, `+${res.restore} ${res.stat === 'thirst' ? 'Su' : 'Yemek'}`);
+    }
     if (res.depleted) this.paintTile(idx);
-    this.dirty = true;
   }
 
   private craft(recipe: Recipe | undefined): void {
     if (!recipe) return;
-    if (this.inv.craft(recipe)) {
-      this.say(`Üretildi: ${ITEMS[recipe.result].name}`);
-    } else if (!this.inv.canCraft(recipe)) {
-      this.say('Malzeme yetersiz');
-    } else {
-      this.say('Çanta dolu');
-    }
+    if (this.inv.craft(recipe)) this.say(`Üretildi: ${ITEMS[recipe.result].name}`);
+    else if (!this.inv.canCraft(recipe)) this.say('Malzeme yetersiz');
+    else this.say('Çanta dolu');
   }
 
   private say(text: string): void {
     this.message = text;
     this.messageLeft = CONFIG.messageSeconds;
-    this.dirty = true;
+  }
+
+  // Ölüm: envanter öldüğün yere çanta olarak bırakılır, kısa bir süre sonra başlangıca dönersin.
+  private die(): void {
+    this.dead = true;
+    this.respawnLeft = SURVIVAL.respawnSeconds;
+    this.message = '';
+    this.panelOpen = false;
+    this.joystick.cancel();
+    const bag = dropBag(this.inv, this.pos.x, this.pos.y);
+    if (bag) {
+      this.bags.push(bag);
+      const g = this.add.graphics().setDepth(8);
+      g.fillStyle(0x5a3b1f, 1);
+      g.fillRoundedRect(-8, -6, 16, 12, 2);
+      g.lineStyle(1, 0xe8d9a0, 0.8);
+      g.strokeRoundedRect(-8, -6, 16, 12, 2);
+      g.setPosition(bag.x, bag.y);
+      this.uiCam.ignore(g);
+      this.bagGfx.set(bag, g);
+    }
+  }
+
+  private respawn(): void {
+    this.dead = false;
+    this.pos = { ...this.spawn };
+    this.player.setPosition(this.pos.x, this.pos.y);
+    this.vitals = startVitals();
+    this.selected = 0;
+  }
+
+  private pickUpBags(): void {
+    if (this.bags.length === 0) return;
+    const emptied = pickupBags(this.inv, this.bags, this.pos.x, this.pos.y, SURVIVAL.bagPickupTiles * CONFIG.tileSize);
+    for (const bag of emptied) {
+      this.bagGfx.get(bag)?.destroy();
+      this.bagGfx.delete(bag);
+    }
   }
 
   private floatText(x: number, y: number, text: string): void {

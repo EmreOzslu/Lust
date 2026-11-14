@@ -70,6 +70,17 @@ export class Inventory {
     return true;
   }
 
+  // Tüm dolu slotları alır ve çantayı boşaltır (ölünce çantanın bırakılması için).
+  takeAll(): Stack[] {
+    const out: Stack[] = [];
+    for (let i = 0; i < this.slots.length; i++) {
+      const s = this.slots[i];
+      if (s) out.push({ id: s.id, count: s.count });
+      this.slots[i] = null;
+    }
+    return out;
+  }
+
   canCraft(recipe: Recipe): boolean {
     return (Object.entries(recipe.cost) as [ItemId, number][]).every(
       ([id, need]) => this.count(id) >= need,

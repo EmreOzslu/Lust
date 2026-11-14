@@ -24,3 +24,22 @@ export const CONFIG = {
   actionCooldown: 0.3,
   messageSeconds: 2,
 } as const;
+
+// M3: hayatta kalma ve döngü sayıları.
+export const SURVIVAL = {
+  dayLength: 360,
+  nightLength: 180,
+  maxVital: 100,
+  startHp: 100,
+  startHunger: 80,
+  startThirst: 80,
+  hungerDrain: 0.2,
+  thirstDrain: 0.3,
+  starveDmg: 1,
+  thirstDmg: 1.5,
+  coldDmg: 0.15,
+  respawnSeconds: 2.5,
+  bagPickupTiles: 0.6,
+  bushChance: 0.03,
+  nightAlpha: 0.35,
+} as const;

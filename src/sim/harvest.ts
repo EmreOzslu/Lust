@@ -1,16 +1,16 @@
 import { ITEMS, type ItemId, type ToolKind } from '../data/items';
-import { RESOURCES } from '../data/resources';
+import { RESOURCES, type VitalStat } from '../data/resources';
 import { TILE } from '../data/tiles';
 import type { WorldMap } from './map';
 
 export type HarvestResult =
-  | { ok: true; item: ItemId; count: number; depleted: boolean }
+  | { ok: true; item: ItemId | null; count: number; depleted: boolean; stat?: VitalStat; restore: number }
   | { ok: false; reason: 'none' }
   | { ok: false; reason: 'need_tool'; need: ToolKind }
   | { ok: false; reason: 'no_space' };
 
-// Tek vuruş. remaining: tile index → kalan miktar (yalnızca kısmen kırılmış düğümler).
-// canAccept: çantada yer var mı? Yer yoksa vuruş boşa gitmez.
+// Tek vuruş. remaining: tile index → kalan miktar (yalnızca kısmen tüketilmiş düğümler).
+// canAccept: çantada yer var mı? Eşya düşüren kaynaklarda, yer yoksa vuruş boşa gitmez.
 export function harvestHit(
   map: WorldMap,
   remaining: Map<number, number>,
@@ -30,16 +30,25 @@ export function harvestHit(
   const power = matched ? (heldDef?.power ?? 1) : 1;
   const left = remaining.get(idx) ?? res.amount;
   const count = Math.min(power, left);
-  if (!canAccept(res.item, count)) return { ok: false, reason: 'no_space' };
+  if (res.item && !canAccept(res.item, count)) return { ok: false, reason: 'no_space' };
 
   const after = left - count;
+  let depleted = false;
   if (after <= 0) {
     remaining.delete(idx);
     map.tiles[idx] = TILE.Grass;
-    return { ok: true, item: res.item, count, depleted: true };
+    depleted = true;
+  } else {
+    remaining.set(idx, after);
   }
-  remaining.set(idx, after);
-  return { ok: true, item: res.item, count, depleted: false };
+  return {
+    ok: true,
+    item: res.item,
+    count,
+    depleted,
+    stat: res.effect?.stat,
+    restore: res.effect ? count * res.effect.perUnit : 0,
+  };
 }
 
 // Oyuncuya en yakın kaynak tile'ının indeksi. Erişim yarıçapı piksel cinsinden.
