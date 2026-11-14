@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { BAR, PAL } from '../data/palette';
 import { CONFIG, SURVIVAL } from '../data/config';
 import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES, type Recipe } from '../data/recipes';
@@ -24,8 +25,9 @@ export interface HudState {
 
 const SLOT = 50;
 const GAP = 6;
-const TEXT_STYLE = { fontFamily: 'sans-serif', fontSize: '12px', color: '#e8d9a0' };
-const SMALL_STYLE = { fontFamily: 'sans-serif', fontSize: '10px', color: '#e8d9a0' };
+const TEXT_STYLE = { fontFamily: 'sans-serif', fontSize: '12px', color: PAL.creamHex };
+const TITLE_STYLE = { fontFamily: 'Georgia, serif', fontSize: '14px', color: PAL.creamHex };
+const SMALL_STYLE = { fontFamily: 'sans-serif', fontSize: '10px', color: PAL.creamHex };
 const ROW_H = 44;
 const ROW_GAP = 6;
 const ROW_POOL = 8;
@@ -67,9 +69,9 @@ export class Hud {
     }
 
     const a = this.actionCircle();
-    this.actionLabel = scene.add.text(a.x, a.y, 'VUR', TEXT_STYLE).setOrigin(0.5).setDepth(901);
+    this.actionLabel = scene.add.text(a.x, a.y, 'VUR', TITLE_STYLE).setOrigin(0.5).setDepth(901);
     const c = this.craftBox();
-    this.craftLabel = scene.add.text(c.x + c.w / 2, c.y + c.h / 2, 'ÜRET', TEXT_STYLE).setOrigin(0.5).setDepth(901);
+    this.craftLabel = scene.add.text(c.x + c.w / 2, c.y + c.h / 2, 'ÜRET', TITLE_STYLE).setOrigin(0.5).setDepth(901);
     this.message = scene.add.text(16, 18, '', TEXT_STYLE).setDepth(901).setWordWrapWidth(this.W - 130);
 
     for (const [label, y] of [
@@ -82,7 +84,7 @@ export class Hud {
     this.dayLabel = scene.add.text(16, 92, '', SMALL_STYLE).setDepth(901);
 
     const p = this.panelBox();
-    this.panelTitle = scene.add.text(p.x + 12, p.y + 12, 'Üretim', TEXT_STYLE).setDepth(901);
+    this.panelTitle = scene.add.text(p.x + 12, p.y + 12, 'Üretim', TITLE_STYLE).setDepth(901);
     for (let i = 0; i < ROW_POOL; i++) {
       this.panelRows.push(scene.add.text(0, 0, '', TEXT_STYLE).setDepth(901).setVisible(false));
     }
@@ -92,7 +94,7 @@ export class Hud {
       .setWordWrapWidth(p.w - 24);
 
     this.deadLabel = scene.add
-      .text(this.W / 2, this.H / 2, '', { fontFamily: 'sans-serif', fontSize: '22px', color: '#e8d9a0', align: 'center' })
+      .text(this.W / 2, this.H / 2, '', { fontFamily: 'Georgia, serif', fontSize: '22px', color: PAL.creamHex, align: 'center' })
       .setOrigin(0.5)
       .setDepth(950)
       .setVisible(false);
@@ -137,10 +139,10 @@ export class Hud {
     // Hotbar
     for (let i = 0; i < CONFIG.hotbarSize; i++) {
       const { x, y } = this.slotPos(i);
-      g.fillStyle(0x0b1a1f, 0.55);
+      g.fillStyle(PAL.panel, 0.55);
       g.fillRoundedRect(x, y, SLOT, SLOT, 6);
       const sel = i === state.selected;
-      g.lineStyle(sel ? 3 : 1, sel ? 0xe8d9a0 : 0x6b6a68, sel ? 1 : 0.7);
+      g.lineStyle(sel ? 3 : 1, sel ? PAL.brass : PAL.stone, sel ? 1 : 0.7);
       g.strokeRoundedRect(x, y, SLOT, SLOT, 6);
 
       const s = state.inv.slots[i];
@@ -158,13 +160,13 @@ export class Hud {
 
     // Hayati değer çubukları: can, açlık, susuzluk
     const bars: [number, number, number][] = [
-      [state.vitals.hp, 0xc0504d, 0],
-      [state.vitals.hunger, 0xd9a441, 1],
-      [state.vitals.thirst, 0x4fa3c7, 2],
+      [state.vitals.hp, BAR.hp, 0],
+      [state.vitals.hunger, BAR.hunger, 1],
+      [state.vitals.thirst, BAR.thirst, 2],
     ];
     for (const [val, color, row] of bars) {
       const y = BAR_Y[row];
-      g.fillStyle(0x0b1a1f, 0.6);
+      g.fillStyle(PAL.panel, 0.6);
       g.fillRoundedRect(BAR_X, y, BAR_W, BAR_H, 3);
       g.fillStyle(color, 1);
       g.fillRoundedRect(BAR_X, y, BAR_W * Math.max(0, val) / SURVIVAL.maxVital, BAR_H, 3);
@@ -173,16 +175,16 @@ export class Hud {
 
     // Aksiyon butonu
     const a = this.actionCircle();
-    g.fillStyle(0x0b1a1f, 0.5);
+    g.fillStyle(PAL.panel, 0.5);
     g.fillCircle(a.x, a.y, a.r);
-    g.lineStyle(2, 0xe8d9a0, 0.8);
+    g.lineStyle(2, PAL.brass, 0.8);
     g.strokeCircle(a.x, a.y, a.r);
 
     // Üret butonu
     const c = this.craftBox();
-    g.fillStyle(state.panelOpen ? 0xe8d9a0 : 0x0b1a1f, state.panelOpen ? 0.9 : 0.6);
+    g.fillStyle(state.panelOpen ? PAL.brass : PAL.panel, state.panelOpen ? 0.9 : 0.6);
     g.fillRoundedRect(c.x, c.y, c.w, c.h, 8);
-    this.craftLabel.setColor(state.panelOpen ? '#0b1a1f' : '#e8d9a0');
+    this.craftLabel.setColor(state.panelOpen ? PAL.nightHex : PAL.creamHex);
 
     this.message.setText(state.message);
 
@@ -192,9 +194,9 @@ export class Hud {
     for (const t of this.panelRows) t.setVisible(false);
     if (state.panelOpen) {
       const p = this.panelBox();
-      g.fillStyle(0x0b1a1f, 0.85);
+      g.fillStyle(PAL.panel, 0.85);
       g.fillRoundedRect(p.x, p.y, p.w, p.h, 10);
-      g.lineStyle(2, 0xe8d9a0, 0.5);
+      g.lineStyle(2, PAL.brass, 0.5);
       g.strokeRoundedRect(p.x, p.y, p.w, p.h, 10);
 
       RECIPES.forEach((recipe, i) => {
@@ -202,10 +204,10 @@ export class Hud {
         const txt = this.panelRows[i];
         const r = this.rowBox(i);
         const can = state.inv.canCraft(recipe);
-        g.fillStyle(can ? 0xe8d9a0 : 0x6b6a68, 0.2);
+        g.fillStyle(can ? PAL.brass : PAL.stone, 0.2);
         g.fillRoundedRect(r.x, r.y, r.w, r.h, 6);
         txt.setPosition(r.x + 10, r.y + r.h / 2).setOrigin(0, 0.5).setVisible(true);
-        txt.setColor(can ? '#e8d9a0' : '#8f8c86');
+        txt.setColor(can ? PAL.creamHex : '#8f8c86');
         txt.setText(`${ITEMS[recipe.result].name} ×${recipe.count}  —  ${costText(recipe)}`);
       });
 

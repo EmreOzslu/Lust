@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { PAL } from '../data/palette';
 import { CONFIG } from '../data/config';
 import { stickVector } from '../sim/input';
 import type { Vec2 } from '../sim/movement';
@@ -17,12 +18,12 @@ export class Joystick {
     this.base = scene.add.graphics().setDepth(1000).setVisible(false);
     this.knob = scene.add.graphics().setDepth(1001).setVisible(false);
 
-    this.base.fillStyle(0x0b1a1f, 0.35);
+    this.base.fillStyle(PAL.panel, 0.35);
     this.base.fillCircle(0, 0, CONFIG.joystickRadius);
-    this.base.lineStyle(2, 0xe8d9a0, 0.5);
+    this.base.lineStyle(2, PAL.brass, 0.5);
     this.base.strokeCircle(0, 0, CONFIG.joystickRadius);
 
-    this.knob.fillStyle(0xe8d9a0, 0.6);
+    this.knob.fillStyle(PAL.brass, 0.6);
     this.knob.fillCircle(0, 0, CONFIG.joystickRadius * 0.4);
   }
 

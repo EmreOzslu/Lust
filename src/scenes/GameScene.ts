@@ -2,7 +2,10 @@ import Phaser from 'phaser';
 import { CONFIG, SURVIVAL } from '../data/config';
 import { ITEMS, TOOL_ITEM, type ItemId } from '../data/items';
 import { RECIPES, type Recipe } from '../data/recipes';
-import { TILE_DEFS } from '../data/tiles';
+import { PAL } from '../data/palette';
+import { drawAtlas, drawBag, drawPlayer } from '../render/art';
+import { FRAME_COUNT, TILE_PX, frameFor, variantAt } from '../render/atlas';
+import { TILE } from '../data/tiles';
 import { Inventory } from '../sim/inventory';
 import { dayNumber, isNight } from '../sim/clock';
 import { findHarvestTarget, harvestHit } from '../sim/harvest';
@@ -27,11 +30,11 @@ export class GameScene extends Phaser.Scene {
   private map!: WorldMap;
   private pos: Vec2 = { x: 0, y: 0 };
   private spawn: Vec2 = { x: 0, y: 0 };
-  private player!: Phaser.GameObjects.Graphics;
+  private player!: Phaser.GameObjects.Image;
   private joystick!: Joystick;
   private hud!: Hud;
   private uiCam!: Phaser.Cameras.Scene2D.Camera;
-  private groundTex!: Phaser.Textures.CanvasTexture;
+  private groundLayer!: Phaser.Tilemaps.TilemapLayer;
   private nightOverlay!: Phaser.GameObjects.Rectangle;
   private inv = new Inventory(CONFIG.inventorySize);
   private remaining = new Map<number, number>();
@@ -46,7 +49,7 @@ export class GameScene extends Phaser.Scene {
   private dead = false;
   private respawnLeft = 0;
   private bags: Bag[] = [];
-  private bagGfx = new Map<Bag, Phaser.GameObjects.Graphics>();
+  private bagGfx = new Map<Bag, Phaser.GameObjects.Image>();
 
   private keys!: {
     up: Dir;
@@ -66,19 +69,24 @@ export class GameScene extends Phaser.Scene {
     const T = CONFIG.tileSize;
     this.map = generateWorld(CONFIG.seed);
 
-    const ground = this.drawGround();
+    this.buildWorld();
 
     this.spawn = {
       x: (this.map.spawn.tx + 0.5) * T,
       y: (this.map.spawn.ty + 0.5) * T,
     };
     this.pos = { ...this.spawn };
-    this.player = this.add.graphics().setDepth(10);
-    this.player.fillStyle(0x0b1a1f, 0.4);
-    this.player.fillEllipse(0, CONFIG.playerRadius, CONFIG.playerRadius * 2, CONFIG.playerRadius);
-    this.player.fillStyle(0xe8d9a0, 1);
-    this.player.fillCircle(0, 0, CONFIG.playerRadius);
-    this.player.setPosition(this.pos.x, this.pos.y);
+    const pc = this.textures.createCanvas('player', 28, 28);
+    if (pc) {
+      drawPlayer(pc.getContext(), 28);
+      pc.refresh();
+    }
+    const bc = this.textures.createCanvas('bag', 32, 32);
+    if (bc) {
+      drawBag(bc.getContext(), 32);
+      bc.refresh();
+    }
+    this.player = this.add.image(this.pos.x, this.pos.y, 'player').setDepth(10);
 
     const worldCam = this.cameras.main;
     worldCam.setBounds(0, 0, this.map.size * T, this.map.size * T);
@@ -90,13 +98,13 @@ export class GameScene extends Phaser.Scene {
 
     // Gece karartması: UI katmanında, zoom'dan bağımsız tam ekran.
     this.nightOverlay = this.add
-      .rectangle(0, 0, this.scale.width, this.scale.height, 0x0a1530, 0)
+      .rectangle(0, 0, this.scale.width, this.scale.height, PAL.night, 0)
       .setOrigin(0, 0)
       .setDepth(800);
 
     // UI kamerası: joystick, HUD ve karartma. Dünya kamerası bunları görmez.
     this.uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height);
-    this.uiCam.ignore([ground, this.player]);
+    this.uiCam.ignore([this.groundLayer, this.player]);
     worldCam.ignore([...this.joystick.getObjects(), ...this.hud.getObjects(), this.nightOverlay]);
 
     const kb = this.input.keyboard;
@@ -295,14 +303,9 @@ export class GameScene extends Phaser.Scene {
     const bag = dropBag(this.inv, this.pos.x, this.pos.y);
     if (bag) {
       this.bags.push(bag);
-      const g = this.add.graphics().setDepth(8);
-      g.fillStyle(0x5a3b1f, 1);
-      g.fillRoundedRect(-8, -6, 16, 12, 2);
-      g.lineStyle(1, 0xe8d9a0, 0.8);
-      g.strokeRoundedRect(-8, -6, 16, 12, 2);
-      g.setPosition(bag.x, bag.y);
-      this.uiCam.ignore(g);
-      this.bagGfx.set(bag, g);
+      const img = this.add.image(bag.x, bag.y, 'bag').setDepth(8);
+      this.uiCam.ignore(img);
+      this.bagGfx.set(bag, img);
     }
   }
 
@@ -325,7 +328,7 @@ export class GameScene extends Phaser.Scene {
 
   private floatText(x: number, y: number, text: string): void {
     const t = this.add
-      .text(x, y, text, { fontFamily: 'sans-serif', fontSize: '12px', color: '#e8d9a0' })
+      .text(x, y, text, { fontFamily: 'Georgia, serif', fontSize: '13px', color: PAL.creamHex })
       .setOrigin(0.5)
       .setDepth(50);
     this.uiCam.ignore(t);
@@ -338,37 +341,34 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  // Harita tek piksel/tile olarak bir canvas dokusuna yazılır, nearest filtreyle büyütülür.
-  private drawGround(): Phaser.GameObjects.Image {
+  // Harita Phaser tilemap olarak kurulur. Her kare bir (tip, varyant) çifti.
+  // Tükenen düğüm, layer üzerinde çimen karesiyle değiştirilir.
+  private buildWorld(): void {
     const size = this.map.size;
-    const tex = this.textures.createCanvas('world', size, size);
-    if (!tex) throw new Error('canvas texture oluşturulamadı');
-    this.groundTex = tex;
-    const ctx = tex.getContext();
-    const img = ctx.createImageData(size, size);
-    for (let i = 0; i < size * size; i++) {
-      const c = TILE_DEFS[this.map.tiles[i]].color;
-      img.data[i * 4] = (c >> 16) & 0xff;
-      img.data[i * 4 + 1] = (c >> 8) & 0xff;
-      img.data[i * 4 + 2] = c & 0xff;
-      img.data[i * 4 + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    tex.refresh();
-    tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    const atlas = this.textures.createCanvas('atlas', FRAME_COUNT * TILE_PX, TILE_PX);
+    if (!atlas) throw new Error('atlas oluşturulamadı');
+    drawAtlas(atlas.getContext(), FRAME_COUNT);
+    atlas.refresh();
 
-    return this.add.image(0, 0, 'world').setOrigin(0, 0).setScale(CONFIG.tileSize);
+    const data: number[][] = [];
+    for (let ty = 0; ty < size; ty++) {
+      const row: number[] = [];
+      for (let tx = 0; tx < size; tx++) {
+        row.push(frameFor(this.map.tiles[ty * size + tx], variantAt(tx, ty)));
+      }
+      data.push(row);
+    }
+    const tmap = this.make.tilemap({ data, tileWidth: TILE_PX, tileHeight: TILE_PX });
+    const tiles = tmap.addTilesetImage('atlas', 'atlas', TILE_PX, TILE_PX, 0, 0);
+    if (!tiles) throw new Error('tileset oluşturulamadı');
+    this.groundLayer = tmap.createLayer(0, tiles, 0, 0)!;
+    this.groundLayer.setDepth(0);
   }
 
-  // Tükenen düğümün tile'ını çimene boyar.
   private paintTile(idx: number): void {
     const size = this.map.size;
     const tx = idx % size;
     const ty = (idx - tx) / size;
-    const c = TILE_DEFS[this.map.tiles[idx]].color;
-    const ctx = this.groundTex.getContext();
-    ctx.fillStyle = '#' + c.toString(16).padStart(6, '0');
-    ctx.fillRect(tx, ty, 1, 1);
-    this.groundTex.refresh();
+    this.groundLayer.putTileAt(frameFor(TILE.Grass, variantAt(tx, ty)), tx, ty);
   }
 }
