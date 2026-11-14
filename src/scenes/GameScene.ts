@@ -76,9 +76,9 @@ export class GameScene extends Phaser.Scene {
       y: (this.map.spawn.ty + 0.5) * T,
     };
     this.pos = { ...this.spawn };
-    const pc = this.textures.createCanvas('player', 28, 28);
+    const pc = this.textures.createCanvas('player', 32, 32);
     if (pc) {
-      drawPlayer(pc.getContext(), 28);
+      drawPlayer(pc.getContext(), 32);
       pc.refresh();
     }
     const bc = this.textures.createCanvas('bag', 32, 32);

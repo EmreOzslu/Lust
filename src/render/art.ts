@@ -35,36 +35,47 @@ function groundBase(ctx: Ctx, ox: number, oy: number, rnd: Rnd, color: number): 
 
 function grass(ctx: Ctx, ox: number, oy: number, v: number, rnd: Rnd): void {
   groundBase(ctx, ox, oy, rnd, PAL.grass);
-  // Nemli toprak lekeleri: tonal değişim
-  for (let i = 0; i < 3; i++) {
-    ctx.globalAlpha = 0.12;
+  // Tonal yamalar: koyu çukurlar ve açık tümsekler
+  for (let i = 0; i < 5; i++) {
+    ctx.globalAlpha = 0.14;
     ctx.fillStyle = hex(i % 2 ? PAL.grassDark : PAL.grassLight);
     ctx.beginPath();
-    ctx.ellipse(ox + rnd() * TILE_PX, oy + rnd() * TILE_PX, 5 + rnd() * 4, 3 + rnd() * 3, rnd() * 3, 0, Math.PI * 2);
+    ctx.ellipse(ox + rnd() * TILE_PX, oy + rnd() * TILE_PX, 4 + rnd() * 5, 2.5 + rnd() * 3, rnd() * 3, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.globalAlpha = 1;
-  // Ot kümeleri: üç bıçaklı tutamlar
-  ctx.strokeStyle = hex(PAL.grassLight);
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 5; i++) {
+  // İki tonlu ot tutamları: koyu gölge, açık uç
+  for (let i = 0; i < 6; i++) {
     const x = ox + 2 + rnd() * (TILE_PX - 4);
     const y = oy + 5 + rnd() * (TILE_PX - 7);
-    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = hex(PAL.grassDark);
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, y + 1);
+    ctx.lineTo(x - 2, y - 4);
+    ctx.moveTo(x + 0.5, y + 1);
+    ctx.lineTo(x + 0.5, y - 5);
+    ctx.moveTo(x + 0.5, y + 1);
+    ctx.lineTo(x + 2.5, y - 4);
+    ctx.stroke();
+    ctx.strokeStyle = hex(PAL.grassLight);
+    ctx.globalAlpha = 0.5;
     ctx.beginPath();
     ctx.moveTo(x, y);
-    ctx.lineTo(x - 2, y - 4);
-    ctx.moveTo(x, y);
-    ctx.lineTo(x, y - 5);
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + 2, y - 4);
+    ctx.lineTo(x - 1.5, y - 3.5);
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
   if (v === 1) {
-    // Yağmur birikintisi: turkuaz yansıma
-    circle(ctx, ox + 10 + rnd() * 12, oy + 10 + rnd() * 12, 3.5, PAL.sheen, 0.25);
-    circle(ctx, ox + 10 + rnd() * 12, oy + 10 + rnd() * 12, 1.2, PAL.sheen, 0.5);
+    // Yağmur birikintisi: turkuaz yansıma ve küçük halka
+    circle(ctx, ox + 10 + rnd() * 12, oy + 10 + rnd() * 12, 4, PAL.sheen, 0.18);
+    ctx.strokeStyle = hex(PAL.sheen);
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath();
+    ctx.arc(ox + 14, oy + 16, 3.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 }
 
@@ -239,6 +250,7 @@ export function drawAtlas(ctx: Ctx, frames: number): void {
 // Oyuncu: üstten görünüm. Omuzlu palto, atkı, geniş kenarlı şapka.
 export function drawPlayer(ctx: Ctx, size: number): void {
   const c = size / 2;
+  const k = size / 28; // ölçek: 28 px referans çizimi
   // Gölge
   ctx.globalAlpha = 0.35;
   ctx.fillStyle = '#000000';
@@ -249,8 +261,12 @@ export function drawPlayer(ctx: Ctx, size: number): void {
   // Omuzlar ve palto
   ctx.fillStyle = hex(PAL.coat);
   ctx.beginPath();
-  ctx.ellipse(c, c + 1, 10, 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(c, c + 2, 12 * k, 7.5 * k, 0, 0, Math.PI * 2);
   ctx.fill();
+  // Koyu kontur: zemin üstünde okunurluk
+  ctx.strokeStyle = hex(PAL.trunk);
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
   // Palto ışığı: üst-sol kıvrım
   ctx.globalAlpha = 0.25;
   ctx.fillStyle = hex(PAL.stoneLight);
@@ -264,13 +280,15 @@ export function drawPlayer(ctx: Ctx, size: number): void {
   ctx.beginPath();
   ctx.arc(c, c + 1, 5.5, Math.PI * 0.15, Math.PI * 0.85);
   ctx.stroke();
-  // Şapka: kenar ve taç
-  ctx.strokeStyle = hex(PAL.hat);
-  ctx.lineWidth = 2;
+  // Şapka: geniş kenar (dolgu, ince kontur), taç
+  ctx.fillStyle = hex(PAL.hat);
   ctx.beginPath();
-  ctx.ellipse(c, c - 1, 8, 6.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(c, c - 1, 8.5 * k, 6.5 * k, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = hex(PAL.trunk);
+  ctx.lineWidth = 1;
   ctx.stroke();
-  circle(ctx, c, c - 1, 4.5, PAL.hatLight);
+  circle(ctx, c, c - 1.5, 4 * k, PAL.hatLight);
   // Lamba yansıması şapkada
   circle(ctx, c - 1.5, c - 3, 1, PAL.lamp, 0.7);
 }
