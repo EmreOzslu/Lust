@@ -41,5 +41,5 @@ export const SURVIVAL = {
   respawnSeconds: 2.5,
   bagPickupTiles: 0.6,
   bushChance: 0.03,
-  nightAlpha: 0.35,
+  nightAlpha: 0.6,
 } as const;

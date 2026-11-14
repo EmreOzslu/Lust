@@ -288,7 +288,14 @@ export function drawPlayer(ctx: Ctx, size: number): void {
   ctx.strokeStyle = hex(PAL.trunk);
   ctx.lineWidth = 1;
   ctx.stroke();
-  circle(ctx, c, c - 1.5, 4 * k, PAL.hatLight);
+  circle(ctx, c, c - 1.5, 4 * k, PAL.hatLight, 1);
+  // Sırt çantası askısı: palto üstünde koyu çizgi (ateşten ayırt eder)
+  ctx.strokeStyle = hex(PAL.trunk);
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(c - 6, c + 3);
+  ctx.lineTo(c + 5, c - 4);
+  ctx.stroke();
   // Lamba yansıması şapkada
   circle(ctx, c - 1.5, c - 3, 1, PAL.lamp, 0.7);
 }
@@ -306,4 +313,141 @@ export function drawBag(ctx: Ctx, size: number): void {
   ctx.lineWidth = 1;
   ctx.strokeRect(c - 8.5, c - 6.5, 17, 13);
   circle(ctx, c, c - 3, 1.6, PAL.rivet);
+}
+
+// İnşa parçaları: 32 px, üstten görünüm. Zemin üzerine çizilir (kare içi tamamen kapatmaz).
+export function drawPiece(ctx: Ctx, kind: string, open: boolean): void {
+  const S = TILE_PX;
+  const rnd = mulberry32(kind.length * 97 + (open ? 1 : 0));
+  switch (kind) {
+    case 'wall_wood': {
+      ctx.fillStyle = hex(PAL.rustDark);
+      ctx.fillRect(0, 0, S, S);
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = hex(i % 2 ? PAL.satchel : PAL.satchelDark);
+        ctx.fillRect(0, i * 8, S, 7);
+        ctx.fillStyle = hex(PAL.trunk);
+        ctx.fillRect(0, i * 8 + 7, S, 1);
+      }
+      circle(ctx, 4, 4, 0.9, PAL.rivet, 0.8);
+      circle(ctx, S - 4, S - 4, 0.9, PAL.rivet, 0.8);
+      break;
+    }
+    case 'wall_stone': {
+      ctx.fillStyle = hex(PAL.stoneDark);
+      ctx.fillRect(0, 0, S, S);
+      for (let r = 0; r < 4; r++) {
+        const y = r * 8;
+        const off = r % 2 ? 0 : 8;
+        for (let x = -off; x < S; x += 16) {
+          ctx.fillStyle = hex(rnd() < 0.5 ? PAL.stone : PAL.stoneLight);
+          ctx.globalAlpha = 0.9;
+          ctx.fillRect(Math.max(0, x) + 0.5, y + 0.5, 15, 7);
+          ctx.globalAlpha = 1;
+        }
+      }
+      ctx.strokeStyle = hex(PAL.stoneDark);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, S - 1, S - 1);
+      break;
+    }
+    case 'floor': {
+      ctx.fillStyle = hex(PAL.satchel);
+      ctx.fillRect(0, 0, S, S);
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = hex(i % 2 ? PAL.satchelDark : PAL.hatLight);
+        ctx.globalAlpha = 0.55;
+        ctx.fillRect(0, i * 8, S, 7);
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = hex(PAL.trunk);
+      ctx.globalAlpha = 0.5;
+      for (let i = 1; i < 4; i++) ctx.fillRect(0, i * 8 - 1, S, 1);
+      ctx.globalAlpha = 1;
+      break;
+    }
+    case 'door': {
+      // Kapı kanadı: dikey tahtalar ve pirinç kol. Açıkken soluk ve ince.
+      ctx.globalAlpha = open ? 0.35 : 1;
+      ctx.fillStyle = hex(PAL.satchelDark);
+      ctx.fillRect(2, 0, S - 4, S);
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = hex(i % 2 ? PAL.satchel : PAL.hatLight);
+        ctx.fillRect(4 + i * 6, 2, 5, S - 4);
+      }
+      circle(ctx, S - 8, S / 2, 1.5, PAL.brass);
+      ctx.globalAlpha = 1;
+      // Kasa
+      ctx.strokeStyle = hex(PAL.trunk);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(1.5, 0.5, S - 3, S - 1);
+      break;
+    }
+    case 'chest': {
+      ctx.fillStyle = hex(PAL.satchel);
+      ctx.fillRect(3, 6, S - 6, S - 10);
+      ctx.fillStyle = hex(PAL.satchelDark);
+      ctx.fillRect(3, 6, S - 6, 5);
+      ctx.strokeStyle = hex(PAL.trunk);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(3.5, 6.5, S - 7, S - 11);
+      // Pirinç köşe ve kilit
+      for (const [x, y] of [[4, 7], [S - 6, 7], [4, S - 6], [S - 6, S - 6]] as const) {
+        circle(ctx, x, y, 1.1, PAL.brass);
+      }
+      ctx.fillStyle = hex(PAL.brass);
+      ctx.fillRect(S / 2 - 1.5, 13, 3, 4);
+      break;
+    }
+    case 'core': {
+      // Yetki çekirdeği: taş taban, paslı çerçeve, sülfür turkuazı rün
+      ctx.fillStyle = hex(PAL.stoneDark);
+      ctx.fillRect(0, 0, S, S);
+      ctx.fillStyle = hex(PAL.rust);
+      ctx.fillRect(3, 3, S - 6, S - 6);
+      ctx.fillStyle = hex(PAL.stone);
+      ctx.fillRect(6, 6, S - 12, S - 12);
+      ctx.strokeStyle = hex(PAL.sulfur);
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.arc(S / 2, S / 2, 5, 0, Math.PI * 2);
+      ctx.moveTo(S / 2, S / 2 - 5);
+      ctx.lineTo(S / 2, S / 2 + 5);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      circle(ctx, S / 2, S / 2, 1.2, PAL.sulfur, 0.9);
+      break;
+    }
+    case 'campfire': {
+      // Taş halka ve kor
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        circle(ctx, S / 2 + Math.cos(a) * 10, S / 2 + Math.sin(a) * 10, 2.6, PAL.stone);
+      }
+      circle(ctx, S / 2, S / 2, 7, PAL.rust, 0.9);
+      circle(ctx, S / 2, S / 2, 4.5, PAL.lamp, 0.95);
+      circle(ctx, S / 2 - 1, S / 2 - 1, 1.8, 0xfff4cc, 0.9);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// Yumuşak ışık dokusu: merkez opak, kenar saydam. Renk verilirse sıcak ton.
+export function drawLight(ctx: Ctx, size: number, color: number, alpha: number): void {
+  const c = size / 2;
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c);
+  const rgba = (a: number) => {
+    const r = (color >> 16) & 0xff;
+    const gg = (color >> 8) & 0xff;
+    const b = color & 0xff;
+    return `rgba(${r},${gg},${b},${a})`;
+  };
+  g.addColorStop(0, rgba(alpha));
+  g.addColorStop(0.6, rgba(alpha * 0.45));
+  g.addColorStop(1, rgba(0));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
 }

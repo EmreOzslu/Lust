@@ -3,6 +3,7 @@ import { BAR, PAL } from '../data/palette';
 import { CONFIG, SURVIVAL } from '../data/config';
 import { ITEMS, type ItemId } from '../data/items';
 import { RECIPES, type Recipe } from '../data/recipes';
+import { BUILD_ORDER, PIECES } from '../data/buildables';
 import type { Inventory } from '../sim/inventory';
 import type { Vitals } from '../sim/survival';
 
@@ -10,7 +11,9 @@ export type HudAction =
   | { kind: 'select'; index: number }
   | { kind: 'action' }
   | { kind: 'toggleCraft' }
-  | { kind: 'craft'; index: number };
+  | { kind: 'craft'; index: number }
+  | { kind: 'toggleBuild' }
+  | { kind: 'piece'; index: number };
 
 export interface HudState {
   inv: Inventory;
@@ -21,7 +24,13 @@ export interface HudState {
   dayText: string;
   dead: boolean;
   respawnIn: number;
+  buildMode: boolean;
+  pieceIndex: number;
 }
+
+const CHIP_W = 47;
+const CHIP_GAP = 3;
+const CHIP_H = 34;
 
 const SLOT = 50;
 const GAP = 6;
@@ -51,6 +60,8 @@ export class Hud {
   private panelTitle: Phaser.GameObjects.Text;
   private panelRows: Phaser.GameObjects.Text[] = [];
   private panelInv: Phaser.GameObjects.Text;
+  private buildLabel: Phaser.GameObjects.Text;
+  private chipLabels: Phaser.GameObjects.Text[] = [];
   private objects: Phaser.GameObjects.GameObject[] = [];
 
   constructor(scene: Phaser.Scene) {
@@ -93,6 +104,15 @@ export class Hud {
       .setDepth(901)
       .setWordWrapWidth(p.w - 24);
 
+    const b = this.buildBox();
+    this.buildLabel = scene.add.text(b.x + b.w / 2, b.y + b.h / 2, 'İNŞA', TITLE_STYLE).setOrigin(0.5).setDepth(901);
+    for (let i = 0; i < BUILD_ORDER.length; i++) {
+      const c = this.chipBox(i);
+      this.chipLabels.push(
+        scene.add.text(c.x + c.w / 2, c.y + c.h / 2, PIECES[BUILD_ORDER[i]].short, { fontFamily: 'sans-serif', fontSize: '9px', color: PAL.creamHex, align: 'center' }).setOrigin(0.5).setDepth(901).setVisible(false),
+      );
+    }
+
     this.deadLabel = scene.add
       .text(this.W / 2, this.H / 2, '', { fontFamily: 'Georgia, serif', fontSize: '22px', color: PAL.creamHex, align: 'center' })
       .setOrigin(0.5)
@@ -109,12 +129,17 @@ export class Hud {
       this.panelTitle,
       this.panelInv,
       ...this.panelRows,
+      this.buildLabel,
+      ...this.chipLabels,
     );
   }
 
   getObjects(): Phaser.GameObjects.GameObject[] {
     return this.objects;
   }
+
+  // Son durum: hitTest, update'in bildirdiği inşa modunu kullanır.
+  private buildOpen = false;
 
   hitTest(x: number, y: number, panelOpen: boolean): HudAction | null {
     if (panelOpen) {
@@ -123,6 +148,12 @@ export class Hud {
       }
     }
     if (inside(x, y, this.craftBox())) return { kind: 'toggleCraft' };
+    if (inside(x, y, this.buildBox())) return { kind: 'toggleBuild' };
+    if (this.buildOpen) {
+      for (let i = 0; i < BUILD_ORDER.length; i++) {
+        if (inside(x, y, this.chipBox(i))) return { kind: 'piece', index: i };
+      }
+    }
     for (let i = 0; i < CONFIG.hotbarSize; i++) {
       const p = this.slotPos(i);
       if (inside(x, y, { x: p.x, y: p.y, w: SLOT, h: SLOT })) return { kind: 'select', index: i };
@@ -135,6 +166,7 @@ export class Hud {
   update(state: HudState): void {
     const g = this.shapes;
     g.clear();
+    this.buildOpen = state.buildMode;
 
     // Hotbar
     for (let i = 0; i < CONFIG.hotbarSize; i++) {
@@ -179,6 +211,24 @@ export class Hud {
     g.fillCircle(a.x, a.y, a.r);
     g.lineStyle(2, PAL.brass, 0.8);
     g.strokeCircle(a.x, a.y, a.r);
+
+    // İnşa butonu ve parça şeridi
+    const bb = this.buildBox();
+    g.fillStyle(PAL.panel, state.buildMode ? 0.9 : 0.6);
+    g.fillRoundedRect(bb.x, bb.y, bb.w, bb.h, 8);
+    g.lineStyle(1, PAL.brass, state.buildMode ? 1 : 0.6);
+    g.strokeRoundedRect(bb.x, bb.y, bb.w, bb.h, 8);
+    BUILD_ORDER.forEach((_kind, i) => {
+      const cb = this.chipBox(i);
+      const sel = state.buildMode && i === state.pieceIndex;
+      g.fillStyle(sel ? PAL.brass : PAL.panel, sel ? 0.9 : 0.75);
+      g.fillRoundedRect(cb.x, cb.y, cb.w, cb.h, 6);
+      g.lineStyle(1, PAL.brass, 0.6);
+      g.strokeRoundedRect(cb.x, cb.y, cb.w, cb.h, 6);
+      const lbl = this.chipLabels[i];
+      lbl.setVisible(state.buildMode);
+      lbl.setColor(sel ? PAL.nightHex : PAL.creamHex);
+    });
 
     // Üret butonu
     const c = this.craftBox();
@@ -235,6 +285,14 @@ export class Hud {
 
   private craftBox(): { x: number; y: number; w: number; h: number } {
     return { x: this.W - 100, y: 14, w: 84, h: 34 };
+  }
+
+  private buildBox(): { x: number; y: number; w: number; h: number } {
+    return { x: this.W - 100, y: 54, w: 84, h: 34 };
+  }
+
+  private chipBox(i: number): { x: number; y: number; w: number; h: number } {
+    return { x: 16 + i * (CHIP_W + CHIP_GAP), y: this.H - 262, w: CHIP_W, h: CHIP_H };
   }
 
   private panelBox(): { x: number; y: number; w: number; h: number } {
